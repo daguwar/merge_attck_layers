@@ -1,78 +1,86 @@
-﻿from mitreattack.navlayers import Layer, LayerOps
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
 
-# 1. Load your layers from files (or from dicts/strings)
-layer1 = Layer()
-layer1.from_file("lager_1.json")
+from mitreattack.navlayers import Layer, LayerOps
 
-#layer2 = Layer()
-#layer2.from_file("lager_2.json")
+LAYER_FILES = [Path("lager_1.json"), Path("lager_4.json")]
+MERGED_FILE = Path("merged_layers.json")
+GRADIENT = {
+    "colors": ["#ffffffff", "#ffe166ff", "#a9ff66ff", "#8ec843ff"],
+    "minValue": 0,
+    "maxValue": 5,
+}
 
-#layer3 = Layer()
-#layer3.from_file("lager_3.json")
 
-layer4 = Layer()
-layer4.from_file("lager_4.json")
+def load_layer(layer_path: Path) -> Layer:
+    """Load a Layer object from a JSON file."""
+    layer = Layer()
+    layer.from_file(str(layer_path))
+    return layer
 
-# --- DEFINE HARMONIZATION FUNCTIONS ---
 
-def harmonize_score(values):
-    # 'values' is a list with the 4 score values for a specific technique.
-    # Filter out layers where the technique has no score (None)
+def harmonize_score(values: List[Optional[float]]) -> Optional[float]:
+    """Return the highest non-null score for a technique."""
     valid_scores = [score for score in values if score is not None]
-
     if not valid_scores:
-        return None  # The technique had no score in any layer.
-
-    # Here we harmonize by selecting the HIGHEST VALUE.
-    # (You can replace max(...) with sum(...) / len(...) if you prefer the average.)
+        return None
     return max(valid_scores)
 
 
-def merge_metadata(values):
-    # 'values' is a list of metadata from the 4 layers (each item is a list of dicts).
-    merged_metadata = []
-
+def merge_metadata(values: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Merge metadata lists from multiple layers without duplicates."""
+    merged_metadata: List[Dict[str, Any]] = []
     for metadata_list in values:
         if metadata_list:
-            # Add all key/value pairs
             merged_metadata.extend(metadata_list)
 
     if not merged_metadata:
         return []
 
-    # To avoid duplicates of exactly the same metadata, make the list unique
-    # by temporarily converting entries to frozen tuples.
-    unique_metadata = [dict(t) for t in {tuple(item.items()) for item in merged_metadata}]
+    unique_metadata = [dict(item) for item in {tuple(entry.items()) for entry in merged_metadata}]
     return unique_metadata
 
-# 2. Create the LayerOps object
-layer_ops = LayerOps(
-    score=lambda x: harmonize_score(x),
-    metadata=lambda x: merge_metadata(x),
-    name=lambda x: "Harmonized merged layer",
-    desc=lambda x: "Merge of multiple sources with harmonized scores and metadata"
-)
 
-# 3. Execute the merge
-# Passing a list of layers means the functions above receive lists of values.
-merged_layer = layer_ops.process([layer1, layer4], default_values={'score': 0})
+def create_layer_ops() -> LayerOps:
+    """Return a LayerOps object configured for harmonized merging."""
+    return LayerOps(
+        score=harmonize_score,
+        metadata=merge_metadata,
+        name=lambda _: "Harmonized merged layer",
+        desc=lambda _: "Merge of multiple sources with harmonized scores and metadata",
+    )
 
-# 3.5 Set every technique to enabled
-layer_dict = merged_layer.to_dict()
-for technique in layer_dict.get('techniques', []):
-    technique['enabled'] = True
 
-# Update the layer with the modified data
-merged_layer.from_dict(layer_dict)
+def enable_all_techniques(layer: Layer) -> None:
+    """Enable every technique in the merged layer."""
+    layer_dict = layer.to_dict()
+    for technique in layer_dict.get("techniques", []):
+        technique["enabled"] = True
+    layer.from_dict(layer_dict)
 
-# 4. Harmonize the gradient
-# Now that we have a merged layer with new scores, set a unified gradient.
-merged_layer.gradient = {
-    "colors": ["#ffffffff", "#ffe166ff", "#a9ff66ff", "#8ec843ff"],
-    "minValue": 0,
-    "maxValue": 5
-}
 
-# 5. Save the result
-merged_layer.to_file("merged_layers.json")
-print("The layers are now merged!")
+def set_gradient(layer: Layer) -> None:
+    """Apply a unified gradient to the merged layer."""
+    layer.gradient = GRADIENT
+
+
+def merge_layers(layer_paths: Iterable[Path], output_path: Path) -> None:
+    """Merge multiple ATT&CK layers and save the result."""
+    layers = [load_layer(path) for path in layer_paths]
+    merged_layer = create_layer_ops().process(layers, default_values={"score": 0})
+    enable_all_techniques(merged_layer)
+    set_gradient(merged_layer)
+    merged_layer.to_file(str(output_path))
+
+
+def main() -> None:
+    """Run the layer merge process."""
+    if not LAYER_FILES:
+        raise ValueError("No layer files configured for merging.")
+
+    merge_layers(LAYER_FILES, MERGED_FILE)
+    print(f"Merged {len(LAYER_FILES)} layers into {MERGED_FILE}.")
+
+
+if __name__ == "__main__":
+    main()
