@@ -6,9 +6,11 @@ This repository contains `merge.py`, a script for merging multiple MITRE ATT&CK 
 
 - Merge any number of ATT&CK layer JSON files
 - Harmonize technique scores by selecting the highest score
+- Deduplicate techniques (one entry per technique ID, removing tactic fields)
 - Merge metadata entries without exact duplicates
 - Enable all techniques optionally
-- Configure layer name, description, output path, score defaults, and gradient settings via CLI
+- Configure layer name, description, output path, score defaults, gradient settings, and ATT&CK version via CLI
+- Pretty-printed JSON output with line breaks
 
 ## Requirements
 
@@ -32,6 +34,7 @@ python merge.py layer1.json layer2.json -o merged_layers.json
 - `--min-value` - Minimum gradient value
 - `--max-value` - Maximum gradient value
 - `--colors` - Gradient colors to use for the merged layer
+- `--attack-version` - ATT&CK version for the merged layer (default: 19)
 
 ## Example
 

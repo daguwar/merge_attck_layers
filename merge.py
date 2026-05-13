@@ -1,4 +1,5 @@
 import argparse
+import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -70,6 +71,48 @@ def set_gradient(layer: Layer, gradient: Dict[str, Any]) -> None:
     layer.gradient = gradient
 
 
+def deduplicate_techniques(layer_dict: Dict[str, Any]) -> None:
+    """Deduplicate techniques and remove tactic fields."""
+    unique_techniques: Dict[str, Dict[str, Any]] = {}
+
+    for technique in layer_dict.get("techniques", []):
+        technique_id = technique.get("techniqueID")
+        if not technique_id:
+            continue
+
+        record = dict(technique)
+        record.pop("tactic", None)
+
+        existing = unique_techniques.get(technique_id)
+        if existing is None:
+            unique_techniques[technique_id] = record
+            continue
+
+        existing_score = existing.get("score")
+        record_score = record.get("score")
+        if record_score is not None and (
+            existing_score is None or record_score > existing_score
+        ):
+            existing["score"] = record_score
+
+        existing["enabled"] = (
+            existing.get("enabled", False) or record.get("enabled", False)
+        )
+
+        existing["metadata"] = merge_metadata(
+            [existing.get("metadata", []), record.get("metadata", [])]
+        )
+
+    layer_dict["techniques"] = list(unique_techniques.values())
+
+
+def write_json(data: Dict[str, Any], output_path: Path) -> None:
+    """Write JSON data with indentation and line breaks."""
+    with output_path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=4)
+        handle.write("\n")
+
+
 def merge_layers(
     layer_paths: Iterable[Path],
     output_path: Path,
@@ -78,6 +121,7 @@ def merge_layers(
     default_score: int,
     name: str,
     description: str,
+    attack_version: str,
 ) -> None:
     """Merge multiple ATT&CK layers and save the result."""
     layers = [load_layer(path) for path in layer_paths]
@@ -87,7 +131,12 @@ def merge_layers(
     )
     enable_all_techniques(merged_layer, enable_techniques)
     set_gradient(merged_layer, gradient)
-    merged_layer.to_file(str(output_path))
+
+    merged_dict = merged_layer.to_dict()
+    if "versions" in merged_dict:
+        merged_dict["versions"]["attack"] = attack_version
+    deduplicate_techniques(merged_dict)
+    write_json(merged_dict, output_path)
 
 
 def parse_args() -> argparse.Namespace:
@@ -159,6 +208,11 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_GRADIENT["colors"],
         help="Gradient colors to use for the merged layer.",
     )
+    parser.add_argument(
+        "--attack-version",
+        default="19",
+        help="ATT&CK version for the merged layer.",
+    )
     return parser.parse_args()
 
 
@@ -182,6 +236,7 @@ def main() -> None:
         args.default_score,
         args.name,
         args.description,
+        args.attack_version,
     )
     print(f"Merged {len(args.input_files)} layers into {args.output}.")
 
