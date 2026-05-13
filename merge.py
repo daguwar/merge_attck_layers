@@ -1,14 +1,14 @@
+import argparse
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from mitreattack.navlayers import Layer, LayerOps
 
-LAYER_FILES = [Path("lager_1.json"), Path("lager_4.json")]
-MERGED_FILE = Path("merged_layers.json")
-GRADIENT = {
+DEFAULT_OUTPUT = Path("merged_layers.json")
+DEFAULT_GRADIENT = {
     "colors": ["#ffffffff", "#ffe166ff", "#a9ff66ff", "#8ec843ff"],
     "minValue": 0,
-    "maxValue": 5,
+    "maxValue": 50,
 }
 
 
@@ -37,49 +37,153 @@ def merge_metadata(values: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     if not merged_metadata:
         return []
 
-    unique_metadata = [dict(item) for item in {tuple(entry.items()) for entry in merged_metadata}]
+    unique_metadata = [
+        dict(item)
+        for item in {tuple(entry.items()) for entry in merged_metadata}
+    ]
     return unique_metadata
 
 
-def create_layer_ops() -> LayerOps:
+def create_layer_ops(name: str, description: str) -> LayerOps:
     """Return a LayerOps object configured for harmonized merging."""
     return LayerOps(
         score=harmonize_score,
         metadata=merge_metadata,
-        name=lambda _: "Harmonized merged layer",
-        desc=lambda _: "Merge of multiple sources with harmonized scores and metadata",
+        name=lambda _: name,
+        desc=lambda _: description,
     )
 
 
-def enable_all_techniques(layer: Layer) -> None:
-    """Enable every technique in the merged layer."""
+def enable_all_techniques(layer: Layer, enable: bool) -> None:
+    """Enable every technique in the merged layer if requested."""
+    if not enable:
+        return
+
     layer_dict = layer.to_dict()
     for technique in layer_dict.get("techniques", []):
         technique["enabled"] = True
     layer.from_dict(layer_dict)
 
 
-def set_gradient(layer: Layer) -> None:
-    """Apply a unified gradient to the merged layer."""
-    layer.gradient = GRADIENT
+def set_gradient(layer: Layer, gradient: Dict[str, Any]) -> None:
+    """Apply a gradient to the merged layer."""
+    layer.gradient = gradient
 
 
-def merge_layers(layer_paths: Iterable[Path], output_path: Path) -> None:
+def merge_layers(
+    layer_paths: Iterable[Path],
+    output_path: Path,
+    enable_techniques: bool,
+    gradient: Dict[str, Any],
+    default_score: int,
+    name: str,
+    description: str,
+) -> None:
     """Merge multiple ATT&CK layers and save the result."""
     layers = [load_layer(path) for path in layer_paths]
-    merged_layer = create_layer_ops().process(layers, default_values={"score": 0})
-    enable_all_techniques(merged_layer)
-    set_gradient(merged_layer)
+    merged_layer = create_layer_ops(name, description).process(
+        layers,
+        default_values={"score": default_score},
+    )
+    enable_all_techniques(merged_layer, enable_techniques)
+    set_gradient(merged_layer, gradient)
     merged_layer.to_file(str(output_path))
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Merge ATT&CK layer JSON files into a single "
+            "harmonized layer."
+        )
+    )
+    parser.add_argument(
+        "input_files",
+        nargs="+",
+        type=Path,
+        help="One or more ATT&CK layer JSON files to merge.",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=DEFAULT_OUTPUT,
+        help="Output path for the merged layer JSON file.",
+    )
+    parser.add_argument(
+        "--name",
+        default=(
+            "Harmonized merged layer"
+        ),
+        help="Name for the merged layer.",
+    )
+    parser.add_argument(
+        "--description",
+        default=(
+            "Merge of multiple sources with harmonized scores "
+            "and metadata"
+        ),
+        help="Description for the merged layer.",
+    )
+    parser.add_argument(
+        "--default-score",
+        type=int,
+        default=0,
+        help="Default score to apply when a technique is missing a score.",
+    )
+    parser.add_argument(
+        "--disable-enable",
+        action="store_true",
+        help="Do not enable all techniques in the merged layer.",
+    )
+    parser.add_argument(
+        "--min-value",
+        type=int,
+        default=(
+            DEFAULT_GRADIENT["minValue"]
+        ),
+        help="Minimum gradient value.",
+    )
+    parser.add_argument(
+        "--max-value",
+        type=int,
+        default=(
+            DEFAULT_GRADIENT["maxValue"]
+        ),
+        help="Maximum gradient value.",
+    )
+    parser.add_argument(
+        "--colors",
+        nargs="*",
+        default=DEFAULT_GRADIENT["colors"],
+        help="Gradient colors to use for the merged layer.",
+    )
+    return parser.parse_args()
 
 
 def main() -> None:
     """Run the layer merge process."""
-    if not LAYER_FILES:
-        raise ValueError("No layer files configured for merging.")
+    args = parse_args()
 
-    merge_layers(LAYER_FILES, MERGED_FILE)
-    print(f"Merged {len(LAYER_FILES)} layers into {MERGED_FILE}.")
+    if not args.input_files:
+        raise ValueError("At least one input layer file is required.")
+
+    gradient = {
+        "colors": args.colors,
+        "minValue": args.min_value,
+        "maxValue": args.max_value,
+    }
+    merge_layers(
+        args.input_files,
+        args.output,
+        not args.disable_enable,
+        gradient,
+        args.default_score,
+        args.name,
+        args.description,
+    )
+    print(f"Merged {len(args.input_files)} layers into {args.output}.")
 
 
 if __name__ == "__main__":
